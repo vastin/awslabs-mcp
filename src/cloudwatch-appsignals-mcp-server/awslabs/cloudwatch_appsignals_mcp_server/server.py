@@ -1574,14 +1574,14 @@ async def get_profiler_recommendations(
     profiling_group_name: str = Field(
         ..., description='Name of the profiling group to get recommendations for'
     ),
+    start_time: str = Field(
+        ..., description='Start time in ISO format (e.g., "2025-01-01T00:00:00Z")'
+    ),
+    end_time: str = Field(
+        ..., description='End time in ISO format (e.g., "2025-01-01T01:00:00Z")'
+    ),
     locale: str = Field(
         default='en-US', description='Language for recommendations (e.g., en-US, zh-CN)'
-    ),
-    start_time: Optional[str] = Field(
-        default=None, description='Start time in ISO format (e.g., "2025-01-01T00:00:00Z")'
-    ),
-    end_time: Optional[str] = Field(
-        default=None, description='End time in ISO format (e.g., "2025-01-01T01:00:00Z")'
     ),
 ) -> str:
     """Get optimization recommendations from CodeGuru Profiler.
@@ -1594,9 +1594,9 @@ async def get_profiler_recommendations(
     
     Parameters:
     - profiling_group_name: The name of the profiling group to analyze
+    - start_time: Start time to limit the analysis period (required)
+    - end_time: End time to limit the analysis period (required)
     - locale: Language for recommendations (default: en-US)
-    - start_time: Optional start time to limit the analysis period
-    - end_time: Optional end time to limit the analysis period
     
     Returns:
     - List of recommendations with detailed explanations
@@ -1614,13 +1614,9 @@ async def get_profiler_recommendations(
         params = {
             'profilingGroupName': profiling_group_name,
             'locale': locale,
+            'startTime': datetime.fromisoformat(start_time.replace('Z', '+00:00')),
+            'endTime': datetime.fromisoformat(end_time.replace('Z', '+00:00')),
         }
-        
-        # Add optional time range if provided
-        if start_time:
-            params['startTime'] = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-        if end_time:
-            params['endTime'] = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
         
         # Get recommendations
         response = codeguru_profiler_client.get_recommendations(**params)
