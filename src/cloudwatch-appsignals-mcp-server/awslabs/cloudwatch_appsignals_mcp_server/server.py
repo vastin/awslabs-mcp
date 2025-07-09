@@ -51,6 +51,7 @@ try:
     appsignals_client = boto3.client('application-signals', region_name=AWS_REGION, config=config)
     cloudwatch_client = boto3.client('cloudwatch', region_name=AWS_REGION, config=config)
     xray_client = boto3.client('xray', region_name=AWS_REGION, config=config)
+    codeguru_profiler_client = boto3.client('codeguruprofiler', region_name=AWS_REGION, config=config)
     logger.debug('AWS clients initialized successfully')
 except Exception as e:
     logger.error(f'Failed to initialize AWS clients: {str(e)}')
@@ -1328,6 +1329,524 @@ async def query_sampled_traces(
     except Exception as e:
         logger.error(f'Error in query_sampled_traces: {str(e)}', exc_info=True)
         return json.dumps({'error': str(e)}, indent=2)
+
+
+@mcp.tool()
+async def list_profiling_groups(
+    include_description: bool = Field(
+        default=True, description='Include profiling group descriptions'
+    ),
+    max_results: int = Field(
+        default=100, description='Maximum number of profiling groups to return'
+    ),
+) -> str:
+    """List AWS CodeGuru Profiler profiling groups.
+    
+    Use this tool to:
+    - Get a list of all profiling groups in your AWS account
+    - View profiling group details like status and creation time
+    - Find profiling groups for further analysis
+    
+    Returns a formatted list showing:
+    - Profiling group name
+    - Status (ACTIVE, INACTIVE, etc.)
+    - Creation time
+    - Description (if include_description is True)
+    
+    This tool helps you identify which applications are being profiled by CodeGuru Profiler.
+    """
+    start_time_perf = timer()
+    logger.debug('Starting list_profiling_groups request')
+    
+    try:
+        response = codeguru_profiler_client.list_profiling_groups(
+            maxResults=max_results
+        )
+        
+        logger.debug(f' response: {response}')
+
+        profiling_groups = response.get('profilingGroupNames', [])
+        
+        if not profiling_groups:
+            logger.warning('No profiling groups found')
+            return 'No profiling groups found in CodeGuru Profiler.'
+            
+        result = f'CodeGuru Profiler Groups ({len(profiling_groups)} total):\n\n'
+        
+        for name in profiling_groups:
+            result += f'• Group: {name}\n'
+            
+        elapsed_time = timer() - start_time_perf
+        logger.debug(f'list_profiling_groups completed in {elapsed_time:.3f}s')
+        return result
+        
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_message = e.response.get('Error', {}).get('Message', 'Unknown error')
+        logger.error(f'AWS ClientError in list_profiling_groups: {error_code} - {error_message}')
+        return f'AWS Error: {error_message}'
+    except Exception as e:
+        logger.error(f'Unexpected error in list_profiling_groups: {str(e)}', exc_info=True)
+        return f'Error: {str(e)}'
+
+
+@mcp.tool()
+async def get_profiling_group_details(
+    profiling_group_name: str = Field(
+        ..., description='Name of the profiling group to get details for'
+    ),
+) -> str:
+    """Get detailed information about a specific CodeGuru Profiler profiling group.
+    
+    Use this tool to:
+    - Get comprehensive details about a profiling group
+    - View configuration settings and status
+    - Check agent orchestration configuration
+    - See compute platform and profiling status
+    
+    Returns detailed information including:
+    - Group name and ARN
+    - Status and configuration
+    - Agent orchestration settings
+    - Compute platform details
+    
+    This tool is useful for understanding how a specific application is being profiled.
+    """
+    start_time_perf = timer()
+    logger.debug(f'Starting get_profiling_group_details request for group: {profiling_group_name}')
+    
+    try:
+        response = codeguru_profiler_client.describe_profiling_group(
+            profilingGroupName=profiling_group_name
+        )
+        
+        group = response.get('profilingGroup', {})
+        
+        if not group:
+            logger.warning(f'No details found for profiling group: {profiling_group_name}')
+            return f'No details found for profiling group: {profiling_group_name}'
+            
+        result = f'Profiling Group Details: {profiling_group_name}\n\n'
+        
+        # Basic information
+        result += f'Name: {group.get("name", "Unknown")}\n'
+        result += f'ARN: {group.get("arn", "Unknown")}\n'
+        
+        # Status
+        state = group.get('state', {})
+        if state:
+            result += f'Status: {state.get("state", "Unknown")}\n'
+            if 'reason' in state:
+                result += f'Status Reason: {state["reason"]}\n'
+        
+        # Creation time
+        created_at = group.get('createdAt', 'Unknown')
+        if isinstance(created_at, datetime):
+            created_at = created_at.strftime('%Y-%m-%d %H:%M:%S')
+        result += f'Created: {created_at}\n'
+        
+        # Updated time
+        updated_at = group.get('updatedAt', 'Unknown')
+        if isinstance(updated_at, datetime):
+            updated_at = updated_at.strftime('%Y-%m-%d %H:%M:%S')
+        result += f'Last Updated: {updated_at}\n'
+        
+        # Description
+        if 'description' in group:
+            result += f'Description: {group["description"]}\n'
+            
+        # Agent orchestration config
+        agent_config = group.get('agentOrchestrationConfig', {})
+        if agent_config:
+            result += '\nAgent Orchestration Configuration:\n'
+            result += f'• Profiling Enabled: {agent_config.get("profilingEnabled", False)}\n'
+            
+        # Compute platform
+        compute_platform = group.get('computePlatform', 'Unknown')
+        result += f'\nCompute Platform: {compute_platform}\n'
+        
+        elapsed_time = timer() - start_time_perf
+        logger.debug(f'get_profiling_group_details completed in {elapsed_time:.3f}s')
+        return result
+        
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_message = e.response.get('Error', {}).get('Message', 'Unknown error')
+        logger.error(f'AWS ClientError in get_profiling_group_details: {error_code} - {error_message}')
+        return f'AWS Error: {error_message}'
+    except Exception as e:
+        logger.error(f'Unexpected error in get_profiling_group_details: {str(e)}', exc_info=True)
+        return f'Error: {str(e)}'
+
+
+@mcp.tool()
+async def update_profiling_status(
+    profiling_group_name: str = Field(
+        ..., description='Name of the profiling group to update'
+    ),
+    enable_profiling: bool = Field(
+        ..., description='Whether to enable (True) or disable (False) profiling'
+    ),
+) -> str:
+    """Enable or disable profiling for a CodeGuru Profiler profiling group.
+    
+    Use this tool to:
+    - Turn profiling on or off for a specific application
+    - Control when profiling data is collected
+    - Temporarily disable profiling for maintenance or debugging
+    
+    Parameters:
+    - profiling_group_name: The name of the profiling group to update
+    - enable_profiling: Set to True to enable profiling, False to disable it
+    
+    Returns:
+    - Confirmation message with the updated profiling status
+    - Details of the profiling group after the update
+    
+    This tool modifies the agent orchestration configuration of a profiling group
+    to control whether profiling is active or not.
+    """
+    start_time_perf = timer()
+    logger.info(f'Starting update_profiling_status for group: {profiling_group_name}, enable: {enable_profiling}')
+    
+    try:
+        # First, get the current configuration to show the before/after state
+        try:
+            before_response = codeguru_profiler_client.describe_profiling_group(
+                profilingGroupName=profiling_group_name
+            )
+            before_config = before_response.get('profilingGroup', {}).get('agentOrchestrationConfig', {})
+            before_status = before_config.get('profilingEnabled', False)
+            logger.debug(f'Current profiling status for {profiling_group_name}: {before_status}')
+        except Exception as e:
+            logger.warning(f'Could not retrieve current status: {str(e)}')
+            before_status = "Unknown"
+        
+        # Update the profiling group
+        response = codeguru_profiler_client.update_profiling_group(
+            profilingGroupName=profiling_group_name,
+            agentOrchestrationConfig={
+                'profilingEnabled': enable_profiling
+            }
+        )
+        
+        # Get the updated configuration
+        updated_group = response.get('profilingGroup', {})
+        updated_config = updated_group.get('agentOrchestrationConfig', {})
+        updated_status = updated_config.get('profilingEnabled', False)
+        
+        # Build response
+        result = f'Successfully updated profiling group: {profiling_group_name}\n\n'
+        result += f'Previous profiling status: {before_status}\n'
+        result += f'New profiling status: {updated_status}\n\n'
+        
+        # Add more details about the profiling group
+        result += 'Profiling Group Details:\n'
+        result += f'• Name: {updated_group.get("name", "Unknown")}\n'
+        
+        # Status
+        state = updated_group.get('state', {})
+        if state:
+            result += f'• Status: {state.get("state", "Unknown")}\n'
+        
+        # Updated time
+        updated_at = updated_group.get('updatedAt', 'Unknown')
+        if isinstance(updated_at, datetime):
+            updated_at = updated_at.strftime('%Y-%m-%d %H:%M:%S')
+        result += f'• Last Updated: {updated_at}\n'
+        
+        elapsed_time = timer() - start_time_perf
+        logger.info(f'update_profiling_status completed in {elapsed_time:.3f}s')
+        return result
+        
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_message = e.response.get('Error', {}).get('Message', 'Unknown error')
+        logger.error(f'AWS ClientError in update_profiling_status: {error_code} - {error_message}')
+        return f'AWS Error: {error_message}'
+    except Exception as e:
+        logger.error(f'Unexpected error in update_profiling_status: {str(e)}', exc_info=True)
+        return f'Error: {str(e)}'
+
+
+@mcp.tool()
+async def get_profiler_recommendations(
+    profiling_group_name: str = Field(
+        ..., description='Name of the profiling group to get recommendations for'
+    ),
+    locale: str = Field(
+        default='en-US', description='Language for recommendations (e.g., en-US, zh-CN)'
+    ),
+    start_time: Optional[str] = Field(
+        default=None, description='Start time in ISO format (e.g., "2025-01-01T00:00:00Z")'
+    ),
+    end_time: Optional[str] = Field(
+        default=None, description='End time in ISO format (e.g., "2025-01-01T01:00:00Z")'
+    ),
+) -> str:
+    """Get optimization recommendations from CodeGuru Profiler.
+    
+    Use this tool to:
+    - Identify performance bottlenecks in your application
+    - Get actionable recommendations to improve code efficiency
+    - Find opportunities to reduce CPU usage and latency
+    - Discover potential cost savings
+    
+    Parameters:
+    - profiling_group_name: The name of the profiling group to analyze
+    - locale: Language for recommendations (default: en-US)
+    - start_time: Optional start time to limit the analysis period
+    - end_time: Optional end time to limit the analysis period
+    
+    Returns:
+    - List of recommendations with detailed explanations
+    - Impact assessment for each recommendation
+    - Code locations where improvements can be made
+    
+    This tool analyzes profiling data to provide specific, actionable recommendations
+    for improving application performance.
+    """
+    start_time_perf = timer()
+    logger.info(f'Starting get_profiler_recommendations for group: {profiling_group_name}')
+    
+    try:
+        # Build request parameters
+        params = {
+            'profilingGroupName': profiling_group_name,
+            'locale': locale,
+        }
+        
+        # Add optional time range if provided
+        if start_time:
+            params['startTime'] = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        if end_time:
+            params['endTime'] = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        
+        # Get recommendations
+        response = codeguru_profiler_client.get_recommendations(**params)
+        logger.debug(f'Raw response keys: {list(response.keys())}')
+        
+        # Check if we have recommendations in the response
+        if 'recommendations' not in response:
+            logger.warning(f'No recommendations key found in response for profiling group: {profiling_group_name}')
+            return f'No recommendations found for profiling group: {profiling_group_name}'
+        
+        raw_recommendations = response.get('recommendations', [])
+        logger.debug(f'Found {len(raw_recommendations)} raw recommendations')
+        
+        if not raw_recommendations:
+            logger.warning(f'No recommendations found for profiling group: {profiling_group_name}')
+            return f'No recommendations found for profiling group: {profiling_group_name}'
+        
+        # Format the response for direct parsing of the pattern-based recommendations
+        recommendations = []
+        
+        for i, rec in enumerate(raw_recommendations):
+            logger.debug(f'Processing recommendation {i+1}: {list(rec.keys())}')
+            
+            if 'pattern' in rec:
+                pattern = rec.get('pattern', {})
+                logger.debug(f'Pattern keys: {list(pattern.keys())}')
+                
+                # Extract key information
+                name = pattern.get('name', 'Unnamed Recommendation')
+                description = pattern.get('description', 'No description available')
+                resolution_steps = pattern.get('resolutionSteps', 'No resolution steps provided')
+                all_matches_sum = rec.get('allMatchesSum', 0)
+                
+                # Create a recommendation entry
+                recommendation = {
+                    'name': name,
+                    'description': description,
+                    'resolution_steps': resolution_steps,
+                    'impact_percentage': all_matches_sum
+                }
+                
+                recommendations.append(recommendation)
+                logger.debug(f'Added recommendation: {name} with impact {all_matches_sum}%')
+            else:
+                logger.warning(f'Recommendation {i+1} does not have pattern key')
+        
+        # Build the formatted output
+        if recommendations:
+            result = f'CodeGuru Profiler Recommendations for {profiling_group_name}\n'
+            result += f'Found {len(recommendations)} recommendations\n\n'
+            
+            for i, rec in enumerate(recommendations, 1):
+                result += f'Recommendation {i}: {rec["name"]}\n'
+                result += f'Impact: {rec["impact_percentage"]:.2f}% of CPU time\n\n'
+                
+                result += 'Description:\n'
+                result += f'{rec["description"]}\n\n'
+                
+                result += 'Resolution Steps:\n'
+                result += f'{rec["resolution_steps"]}\n\n'
+                
+                # Add a separator between recommendations
+                result += '-' * 50 + '\n\n'
+            
+            return result
+        
+        # If no recommendations were found or parsed
+        logger.warning(f'No pattern-based recommendations found for profiling group: {profiling_group_name}')
+        return f'No pattern-based recommendations found for profiling group: {profiling_group_name}. Raw response structure may be different than expected.'
+        
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+        error_message = e.response.get('Error', {}).get('Message', 'Unknown error')
+        logger.error(f'AWS ClientError in get_profiler_recommendations: {error_code} - {error_message}')
+        return f'AWS Error: {error_message}'
+    except Exception as e:
+        logger.error(f'Unexpected error in get_profiler_recommendations: {str(e)}', exc_info=True)
+        return f'Error: {str(e)}'
+
+
+def format_recommendations_output(response: dict, profiling_group_name: str) -> str:
+    """Format the standard recommendations output."""
+    recommendations = response.get('recommendations', [])
+    
+    # Build response
+    result = f'CodeGuru Profiler Recommendations for {profiling_group_name}\n'
+    result += f'Found {len(recommendations)} recommendations\n\n'
+    
+    for i, rec in enumerate(recommendations, 1):
+        # Basic recommendation info
+        result += f'Recommendation {i}: {rec.get("name", "Unnamed")}\n'
+        result += f'Type: {rec.get("type", "Unknown")}\n'
+        result += f'Description: {rec.get("description", "No description")}\n'
+        
+        # Impact assessment
+        impact = rec.get('impact', {})
+        if impact:
+            result += 'Impact:\n'
+            if 'numericImpact' in impact:
+                result += f'• Numeric Impact: {impact["numericImpact"]}\n'
+            if 'category' in impact:
+                result += f'• Category: {impact["category"]}\n'
+        
+        # Code locations
+        locations = rec.get('recommendationLocations', [])
+        if locations:
+            result += 'Code Locations:\n'
+            for loc in locations[:3]:  # Limit to first 3 locations to avoid overwhelming output
+                address = loc.get('address', {})
+                if address:
+                    result += f'• {address.get("type", "Unknown")}: {address.get("name", "Unknown")}\n'
+                    if 'filePath' in address:
+                        result += f'  File: {address["filePath"]}\n'
+                    if 'lineNumber' in address:
+                        result += f'  Line: {address["lineNumber"]}\n'
+            
+            if len(locations) > 3:
+                result += f'  ... and {len(locations) - 3} more locations\n'
+        
+        # Add a separator between recommendations
+        result += '\n' + '-' * 50 + '\n\n'
+    
+    return result
+
+
+def format_pattern_recommendations_output(response: dict, profiling_group_name: str) -> str:
+    """Format the pattern-based recommendations output."""
+    recommendations = response.get('recommendations', [])
+    profile_start_time = response.get('profileStartTime')
+    profile_end_time = response.get('profileEndTime')
+    
+    # Format the time range if available
+    time_range = ""
+    if profile_start_time and profile_end_time:
+        if isinstance(profile_start_time, datetime):
+            start_str = profile_start_time.strftime('%Y-%m-%d %H:%M')
+        else:
+            start_str = str(profile_start_time)
+            
+        if isinstance(profile_end_time, datetime):
+            end_str = profile_end_time.strftime('%Y-%m-%d %H:%M')
+        else:
+            end_str = str(profile_end_time)
+            
+        time_range = f" ({start_str} to {end_str})"
+    
+    # Build response
+    result = f'CodeGuru Profiler Recommendations for {profiling_group_name}{time_range}\n'
+    result += f'Found {len(recommendations)} recommendations\n\n'
+    
+    for i, rec in enumerate(recommendations, 1):
+        # Get the pattern information which contains the detailed recommendation
+        pattern = rec.get('pattern', {})
+        
+        # Log the pattern for debugging
+        logger.debug(f"Pattern for recommendation {i}: {pattern}")
+        
+        # Get the name and description from the pattern
+        name = pattern.get('name', 'Unnamed Recommendation')
+        description = pattern.get('description', 'No description available')
+        resolution_steps = pattern.get('resolutionSteps', 'No resolution steps provided')
+        
+        # Calculate the total impact (sum of all matches)
+        all_matches_sum = rec.get('allMatchesSum', 0)
+        all_matches_count = rec.get('allMatchesCount', 0)
+        
+        # Format the recommendation
+        result += f'Recommendation {i}: {name}\n'
+        
+        # Add impact information
+        if all_matches_sum:
+            result += f'Impact: {all_matches_sum:.2f}% of CPU time\n'
+        
+        if all_matches_count:
+            result += f'Occurrences: {all_matches_count} instances\n'
+        
+        # Add time range for this specific recommendation if available
+        rec_start_time = rec.get('startTime')
+        rec_end_time = rec.get('endTime')
+        if rec_start_time and rec_end_time:
+            if isinstance(rec_start_time, datetime):
+                start_str = rec_start_time.strftime('%Y-%m-%d %H:%M')
+            else:
+                start_str = str(rec_start_time)
+                
+            if isinstance(rec_end_time, datetime):
+                end_str = rec_end_time.strftime('%Y-%m-%d %H:%M')
+            else:
+                end_str = str(rec_end_time)
+                
+            result += f'Time Range: {start_str} to {end_str}\n'
+        
+        # Add description and resolution steps
+        result += '\nDescription:\n'
+        result += f'{description}\n\n'
+        
+        result += 'Resolution Steps:\n'
+        result += f'{resolution_steps}\n\n'
+        
+        # Add top matches information if available
+        top_matches = rec.get('topMatches', [])
+        if top_matches:
+            result += 'Top Matches:\n'
+            for j, match in enumerate(top_matches[:3], 1):  # Limit to first 3 matches
+                threshold_breach = match.get('thresholdBreachValue', 0)
+                frame_address = match.get('frameAddress', 'Unknown')
+                target_index = match.get('targetFramesIndex', -1)
+                
+                # Try to get the actual frame name if available
+                frame_name = "Unknown"
+                if target_index >= 0 and pattern and 'targetFrames' in pattern:
+                    target_frames = pattern.get('targetFrames', [])
+                    if target_frames and len(target_frames) > target_index:
+                        frame_list = target_frames[target_index]
+                        if frame_list and len(frame_list) > 0:
+                            frame_name = frame_list[0]
+                
+                result += f'  {j}. {frame_name} - {threshold_breach:.2f}% CPU time\n'
+            
+            if len(top_matches) > 3:
+                result += f'     ... and {len(top_matches) - 3} more matches\n'
+        
+        # Add a separator between recommendations
+        result += '\n' + '-' * 50 + '\n\n'
+    
+    return result
 
 
 def main():
