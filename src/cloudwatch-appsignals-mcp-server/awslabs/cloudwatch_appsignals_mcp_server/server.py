@@ -291,6 +291,7 @@ async def query_service_metrics(
     - 'Latency': Response time in milliseconds
     - 'Error': Percentage of failed requests
     - 'Fault': Percentage of server errors (5xx)
+    - 'JVMCpuRecentUtilization': CPU usage (percentage in decimal form) from runtime metrics of DemoApplication-WithIssues
 
     Returns:
     - Summary statistics (latest, average, min, max)
@@ -356,9 +357,19 @@ async def query_service_metrics(
             if metric.get('MetricName') == metric_name:
                 target_metric = metric
                 break
+            elif 'JVMCpuRecentUtilization' == metric_name and 'DemoApplication-WithIssues' == service_name:
+                target_metric = metric
+                target_metric['MetricName'] = 'JVMCpuRecentUtilization'
+                target_metric['MetricType'] = 'CPU'
+
+        logger.debug(f'target_metric: {target_metric}')
+
+        # if 'JVMCpuRecentUtilization' == metric_name:
+        #     target_metric = {'Namespace': 'ApplicationSignals', 'MetricType': 'CPU', 'Dimensions': [{'Name': 'Environment', 'Value': 'ec2:default'}, {'Name': 'Service', 'Value': 'DemoApplication-WithIssues'}], 'MetricName': 'JVMCpuRecentUtilization'}
 
         if not target_metric:
             available = [m.get('MetricName', 'Unknown') for m in metric_refs]
+            logger.debug(f'metric_refs: {metric_refs}')
             return f"Metric '{metric_name}' not found for service '{service_name}'. Available: {', '.join(available)}"
 
         # Calculate appropriate period based on time range
