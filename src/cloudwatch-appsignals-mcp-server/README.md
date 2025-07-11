@@ -46,6 +46,28 @@ This server enables AI assistants like Claude, GitHub Copilot, and Amazon Q to h
 7. **`query_service_metrics`** - Queries Application Signals metrics for root causing service performance issues
    - Query Application Signals RED metrics to correlate the relevant OTel Spans/Traces for troubleshooting
 
+8. **`list_profiling_groups`** - List AWS CodeGuru Profiler profiling groups
+   - Get an overview of all profiling groups in your AWS account
+   - View profiling group details like status and creation time
+   - Find profiling groups for further analysis
+
+9. **`get_profiling_group_details`** - Get detailed information about a specific profiling group
+   - Get comprehensive details about a profiling group
+   - View configuration settings and status
+   - Check agent orchestration configuration
+   - See compute platform and profiling status
+
+10. **`update_profiling_status`** - Enable or disable profiling for a profiling group
+   - Turn profiling on or off for a specific application
+   - Control when profiling data is collected
+   - Temporarily disable profiling for maintenance or debugging
+
+11. **`get_profiler_recommendations`** - Get optimization recommendations from CodeGuru Profiler
+   - Identify performance bottlenecks in your application
+   - Get actionable recommendations to improve code efficiency
+   - Find opportunities to reduce CPU usage and latency
+   - Discover potential cost savings
+
 ## Installation
 
 ### Installing via Cursor
@@ -253,7 +275,11 @@ The server requires the following AWS IAM permissions:
         "logs:StartQuery",
         "logs:StopQuery",
         "xray:GetTraceSummaries",
-        "xray:BatchGetTraces"
+        "xray:BatchGetTraces",
+        "codeguruprofiler:ListProfilingGroups",
+        "codeguruprofiler:DescribeProfilingGroup",
+        "codeguruprofiler:UpdateProfilingGroup",
+        "codeguruprofiler:GetRecommendations"
       ],
       "Resource": "*"
     }
